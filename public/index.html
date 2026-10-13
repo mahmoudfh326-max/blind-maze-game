@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>المتاهة العمياء</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        :root {
+            --bg-color: #0b0c10;
+            --grid-bg: #1f2833;
+            --neon-green: #66fcf1;
+            --neon-red: #ff003c;
+            --neon-orange: #ff9a00;
+            --text-color: #c5c6c7;
+        }
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            transition: background 0.3s;
+        }
+        .container { text-align: center; max-width: 400px; width: 90%; }
+        h1 { color: var(--neon-green); text-shadow: 0 0 10px var(--neon-green); }
+        .danger-mode { box-shadow: inset 0 0 50px rgba(255, 0, 60, 0.4); }
+        
+        /* أزرار وشاشات */
+        input, button {
+            background: transparent;
+            border: 2px solid var(--neon-green);
+            color: var(--neon-green);
+            padding: 10px 20px;
+            font-size: 18px;
+            margin: 10px 0;
+            border-radius: 8px;
+            outline: none;
+            width: 100%;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(102, 252, 241, 0.2);
+            transition: 0.3s;
+        }
+        input { color: white; border-color: var(--text-color); }
+        button:hover { background: var(--neon-green); color: var(--bg-color); }
+        button:disabled { border-color: #555; color: #555; cursor: not-allowed; box-shadow: none; }
+        
+        .hidden { display: none !important; }
+        
+        /* شبكة اللعب */
+        #gameBoard {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 5px;
+            margin: 20px auto;
+            width: 300px;
+            height: 300px;
+        }
+        .cell {
+            background-color: var(--grid-bg);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            transition: 0.3s;
+        }
+        .cell.player {
+            background-color: rgba(102, 252, 241, 0.2);
+            box-shadow: 0 0 15px var(--neon-green), inset 0 0 10px var(--neon-green);
+            border: 1px solid var(--neon-green);
+        }
+        .cell.trap {
+            box-shadow: inset 0 0 15px var(--neon-orange);
+            border: 1px solid var(--neon-orange);
+        }
+
+        /* أدوات التحكم */
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
+            max-width: 200px;
+            margin: 0 auto;
+        }
+        .controls button { margin: 0; padding: 15px; font-size: 20px;}
+        #upBtn { grid-column: 2; }
+        #leftBtn { grid-column: 1; }
+        #downBtn { grid-column: 2; }
+        #rightBtn { grid-column: 3; }
+
+        #status { font-size: 20px; font-weight: bold; margin-bottom: 15px; }
+        #radarAlert { color: var(--neon-red); font-weight: bold; font-size: 22px; text-shadow: 0 0 10px var(--neon-red); min-height: 30px; }
+    </style>
+</head>
+<body>
+
+<div class="container" id="menuScreen">
+    <h1>المتاهة العمياء</h1>
+    <button onclick="createRoom()">إنشاء غرفة جديدة</button>
+    <p>أو</p>
+    <input type="text" id="roomInput" placeholder="أدخل كود الغرفة" maxlength="4">
+    <button onclick="joinRoom()">انضمام للغرفة</button>
+</div>
+
+<div class="container hidden" id="lobbyScreen">
+    <h1>كود الغرفة: <span id="displayCode" style="color:white;"></span></h1>
+    <p>ابعت الكود ده لصاحبك وخليه يدخل...</p>
+    <div class="loader">جاري الانتظار...</div>
+</div>
+
+<div class="container hidden" id="gameScreen">
+    <div id="status">جاري التحميل...</div>
+    <div id="radarAlert"></div>
+    <div id="gameBoard"></div>
+    
+    <div style="margin-top:20px;">
+        <button id="trapBtn" onclick="placeTrap()" style="border-color: var(--neon-orange); color: var(--neon-orange);">زرع فخ (<span id="trapsCount">3</span>)</button>
+    </div>
+    
+    <div class="controls" style="margin-top: 15px;">
+        <button id="upBtn" onclick="move(0, -1)">⬆</button>
+        <button id="leftBtn" onclick="move(-1, 0)">⬅</button>
+        <button id="downBtn" onclick="move(0, 1)">⬇</button>
+        <button id="rightBtn" onclick="move(1, 0)">➡</button>
+    </div>
+</div>
+
+<script>
+    const socket = io();
+    let currentCode = '';
+    let myTurn = false;
+
+    // التنقل بين الشاشات
+    function showScreen(id) {
+        document.getElementById('menuScreen').classList.add('hidden');
+        document.getElementById('lobbyScreen').classList.add('hidden');
+        document.getElementById('gameScreen').classList.add('hidden');
+        document.getElementById(id).classList.remove('hidden');
+    }
+
+    function createRoom() {
+        socket.emit('createRoom');
+    }
+
+    function joinRoom() {
+        const code = document.getElementById('roomInput').value;
+        if(code.length === 4) {
+            currentCode = code;
+            socket.emit('joinRoom', code);
+        }
+    }
+
+    socket.on('roomCreated', (code) => {
+        currentCode = code;
+        document.getElementById('displayCode').innerText = code;
+        showScreen('lobbyScreen');
+    });
+
+    socket.on('gameStarted', () => {
+        showScreen('gameScreen');
+        createGrid();
+    });
+
+    socket.on('errorMsg', (msg) => { alert(msg); });
+
+    // بناء شبكة اللعب
+    function createGrid() {
+        const board = document.getElementById('gameBoard');
+        board.innerHTML = '';
+        for (let y = 0; y < 5; y++) {
+            for (let x = 0; x < 5; x++) {
+                const cell = document.createElement('div');
+                cell.classList.add('cell');
+                cell.id = `cell-${x}-${y}`;
+                board.appendChild(cell);
+            }
+        }
+    }
+
+    // تحديث الشاشة بناءً على الداتا اللي جاية من السيرفر
+    socket.on('updateState', (state) => {
+        myTurn = state.myTurn;
+        
+        // تحديث النصوص
+        const statusEl = document.getElementById('status');
+        if(myTurn) {
+            statusEl.innerText = 'دُورك! اتحرك أو ازرع فخ';
+            statusEl.style.color = 'var(--neon-green)';
+        } else {
+            statusEl.innerText = 'انتظر دور الخصم...';
+            statusEl.style.color = 'gray';
+        }
+
+        // الرادار (الخطر)
+        if(state.radar) {
+            document.getElementById('radarAlert').innerText = '⚠️ خطر! الخصم قريب جداً!';
+            document.body.classList.add('danger-mode');
+        } else {
+            document.getElementById('radarAlert').innerText = '';
+            document.body.classList.remove('danger-mode');
+        }
+
+        document.getElementById('trapsCount').innerText = state.trapsLeft;
+        document.getElementById('trapBtn').disabled = (!myTurn || state.trapsLeft === 0);
+
+        // تفعيل/تعطيل الأسهم
+        ['upBtn', 'downBtn', 'leftBtn', 'rightBtn'].forEach(id => {
+            document.getElementById(id).disabled = !myTurn;
+        });
+
+        // رسم المربعات
+        document.querySelectorAll('.cell').forEach(c => {
+            c.classList.remove('player', 'trap');
+            c.innerText = '';
+        });
+
+        // رسم اللاعب
+        const playerCell = document.getElementById(`cell-${state.x}-${state.y}`);
+        if(playerCell) {
+            playerCell.classList.add('player');
+            playerCell.innerText = '👤';
+        }
+
+        // رسم الفخاخ
+        state.traps.forEach(t => {
+            const trapCell = document.getElementById(`cell-${t.x}-${t.y}`);
+            if(trapCell) {
+                trapCell.classList.add('trap');
+                trapCell.innerText = '🔥';
+            }
+        });
+    });
+
+    socket.on('gameOver', (data) => {
+        alert(data.msg);
+        location.reload(); // إعادة تحميل الصفحة للبدء من جديد
+    });
+
+    function move(dx, dy) {
+        if(myTurn) socket.emit('move', { code: currentCode, dx, dy });
+    }
+
+    function placeTrap() {
+        if(myTurn) socket.emit('placeTrap', { code: currentCode });
+    }
+</script>
+</body>
+</html>
